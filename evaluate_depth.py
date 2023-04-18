@@ -12,6 +12,7 @@ from utils import readlines
 from options import MonodepthOptions
 import datasets
 import networks
+from copy import deepcopy
 
 cv2.setNumThreads(0)  # This speeds up evaluation 5x on our unix systems (OpenCV 3.3.1)
 
@@ -82,7 +83,7 @@ def evaluate(opt):
 
         dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
                                            encoder_dict['height'], encoder_dict['width'],
-                                           [0], 4, is_train=False)
+                                           [0], 4, is_train=False, img_ext=".png" if opt.png else ".jpg")
         dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
 
@@ -163,7 +164,7 @@ def evaluate(opt):
         quit()
 
     gt_path = os.path.join(splits_dir, opt.eval_split, "gt_depths.npz")
-    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1')["data"]
+    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1', allow_pickle=True)["data"]
 
     print("-> Evaluating")
 
@@ -176,6 +177,7 @@ def evaluate(opt):
         print("   Mono evaluation - using median scaling")
 
     errors = []
+    errors_metric = []
     ratios = []
 
     for i in range(pred_disps.shape[0]):
@@ -202,6 +204,8 @@ def evaluate(opt):
         pred_depth = pred_depth[mask]
         gt_depth = gt_depth[mask]
 
+        pred_depth_metric = deepcopy(pred_depth)
+
         pred_depth *= opt.pred_depth_scale_factor
         if not opt.disable_median_scaling:
             ratio = np.median(gt_depth) / np.median(pred_depth)
@@ -212,16 +216,22 @@ def evaluate(opt):
         pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
 
         errors.append(compute_errors(gt_depth, pred_depth))
+        errors_metric.append(compute_errors(gt_depth, pred_depth_metric))
 
     if not opt.disable_median_scaling:
         ratios = np.array(ratios)
         med = np.median(ratios)
-        print(" Scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(ratios / med)))
+        print(" Scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(ratios)))
 
     mean_errors = np.array(errors).mean(0)
+    mean_errors_metric = np.array(errors_metric).mean(0)
 
+    print(".....SCALED WITH GROUND TRUTH......")
     print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
     print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
+    print("\n\n.....UNSCALED......")
+    print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
+    print(("&{: 8.3f}  " * 7).format(*mean_errors_metric.tolist()) + "\\\\")
     print("\n-> Done!")
 
 
